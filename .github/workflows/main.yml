@@ -1,0 +1,2245 @@
+name: Build Kreji Turbo APK (all-in-one)
+
+# Satu file ini sudah berisi SEMUA kode aplikasi Kreji Turbo.
+# Taruh di repo sebagai .github/workflows/build.yml, lalu jalankan dari tab Actions.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Siapkan Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Siapkan Gradle 8.5
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Buat semua file proyek
+        run: |
+          set -e
+          mkdir -p KrejiTurbo && cd KrejiTurbo
+          mkdir -p .
+          cat > build.gradle.kts <<'KREJI_EOF_0'
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          KREJI_EOF_0
+          mkdir -p .
+          cat > gradle.properties <<'KREJI_EOF_1'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          KREJI_EOF_1
+          mkdir -p .
+          cat > settings.gradle.kts <<'KREJI_EOF_2'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "KrejiTurbo"
+          include(":app")
+          KREJI_EOF_2
+          mkdir -p app
+          cat > app/build.gradle.kts <<'KREJI_EOF_3'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.lutfikreji.krejiturbo"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.lutfikreji.krejiturbo"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release { isMinifyEnabled = false }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+
+          dependencies {
+              implementation("dev.rikka.shizuku:api:13.1.5")
+              implementation("dev.rikka.shizuku:provider:13.1.5")
+          }
+          KREJI_EOF_3
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'KREJI_EOF_4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="Kreji Turbo"
+                  android:theme="@style/AppTheme">
+
+                  <provider
+                      android:name="rikka.shizuku.ShizukuProvider"
+                      android:authorities="${applicationId}.shizuku"
+                      android:enabled="true"
+                      android:exported="true"
+                      android:multiprocess="false"
+                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".TurboService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Pemantauan layar dan aplikasi aktif untuk optimasi otomatis" />
+                  </service>
+
+                  <receiver
+                      android:name=".AutoReceiver"
+                      android:exported="false" />
+
+                  <receiver
+                      android:name=".BootReceiver"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                      </intent-filter>
+                  </receiver>
+
+                  <receiver
+                      android:name=".BoostWidget"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.appwidget.provider"
+                          android:resource="@xml/boost_widget_info" />
+                  </receiver>
+              </application>
+          </manifest>
+          KREJI_EOF_4
+          mkdir -p app/src/main/java/com/lutfikreji/krejiturbo
+          cat > app/src/main/java/com/lutfikreji/krejiturbo/MainActivity.kt <<'KREJI_EOF_5'
+          package com.lutfikreji.krejiturbo
+
+          import android.app.Activity
+          import android.app.ActivityManager
+          import android.app.AlertDialog
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.content.Intent
+          import android.content.IntentFilter
+          import android.content.SharedPreferences
+          import android.content.pm.ApplicationInfo
+          import android.content.pm.PackageManager
+          import android.content.res.ColorStateList
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.graphics.drawable.RippleDrawable
+          import android.net.ConnectivityManager
+          import android.net.NetworkCapabilities
+          import android.net.Uri
+          import android.os.BatteryManager
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.Settings
+          import android.text.Editable
+          import android.text.TextUtils
+          import android.text.TextWatcher
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+          import rikka.shizuku.Shizuku
+          import java.io.File
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import kotlin.math.abs
+          import kotlin.math.roundToInt
+
+          data class AppItem(val label: String, val pkg: String, val size: Long)
+
+          class MainActivity : Activity() {
+
+              companion object {
+                  const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+                  const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+                  const val CH = "kreji_shizuku"
+                  const val TIKTOK = "https://www.tiktok.com/@lutfikreji"
+                  const val WA = "https://whatsapp.com/channel/0029Vb8BjUO6WaKsAOUqWK0I"
+                  const val SHIZUKU_PKG = "moe.shizuku.privileged.api"
+                  const val NEED = "Aktifkan dan beri akses Shizuku dulu di tab Settings"
+              }
+
+              // ---- Palet biru ----
+              private val cBg = 0xFFF0F4FA.toInt()
+              private val cCard = 0xFFFFFFFF.toInt()
+              private val cInk = 0xFF0F1B2D.toInt()
+              private val cMuted = 0xFF5B6B80.toInt()
+              private val cLine = 0xFFDCE5F0.toInt()
+              private val cSoft = 0xFFE8EFF8.toInt()
+              private val cDark = 0xFF1D4ED8.toInt()
+              private val cWhite = 0xFFFFFFFF.toInt()
+              private val cGreen = 0xFF22A559.toInt()
+              private val cAmber = 0xFFE69A12.toInt()
+              private val cRed = 0xFFDC3B3B.toInt()
+
+              private lateinit var prefs: SharedPreferences
+              private val pages = mutableListOf<View>()
+              private val navs = mutableListOf<LinearLayout>()
+              private val h = Handler(Looper.getMainLooper())
+
+              private class Info(val value: TextView, val sub: TextView)
+              private class Chips(val btns: List<TextView>)
+
+              // Home
+              private lateinit var iDevice: Info
+              private lateinit var iAndroid: Info
+              private lateinit var iBat: Info
+              private lateinit var iTemp: Info
+              private lateinit var iScreen: Info
+              private lateinit var iNet: Info
+              private lateinit var batFill: View
+              private lateinit var batRest: View
+              private lateinit var pillDot: View
+              private lateinit var pillText: TextView
+
+              // Tools
+              private var apps: List<AppItem> = emptyList()
+              private lateinit var appBox: LinearLayout
+              private lateinit var search: EditText
+              private lateinit var chAnim: Chips
+              private lateinit var chSaver: Chips
+              private lateinit var chTimeout: Chips
+              private lateinit var chBright: Chips
+              private lateinit var swScan: Switch
+              private lateinit var swCaptive: Switch
+              private lateinit var swNetRec: Switch
+              private lateinit var swWifiSus: Switch
+              private lateinit var swHw: Switch
+              private lateinit var swAutoStop: Switch
+              private lateinit var swAutoCompact: Switch
+              private lateinit var swRr: Switch
+              private lateinit var chPointer: Chips
+              private lateinit var rrBox: LinearLayout
+              private val sums = HashMap<String, TextView>()
+              private val longPress = listOf(400, 300, 200)
+              private val pointerSp = listOf(0, 3, 6)
+              private lateinit var swAuto: Switch
+              private lateinit var chHours: Chips
+              private lateinit var vLast: TextView
+              private lateinit var heroBtn: TextView
+              private lateinit var heavyBox: LinearLayout
+              private lateinit var vRam: TextView
+              private class Heavy(val label: String, val pkg: String, val mb: Int)
+              private var heavy: List<Heavy> = emptyList()
+              private var heavyAt = 0L
+
+              // Settings
+              private lateinit var vDot: View
+              private lateinit var vState: TextView
+              private lateinit var vStateSub: TextView
+              private lateinit var vTest: TextView
+
+              private val timeouts = listOf(15000, 30000, 60000, 120000)
+              private val brights = listOf(64, 128, 191, 255)
+
+              private val tick = object : Runnable {
+                  override fun run() {
+                      updateInfo()
+                      h.postDelayed(this, 3000)
+                  }
+              }
+
+              private val onReceived = Shizuku.OnBinderReceivedListener { runOnUiThread { refreshStatus() } }
+              private val onDead = Shizuku.OnBinderDeadListener {
+                  runOnUiThread { refreshStatus() }
+                  if (prefs.getBoolean("notif", true)) notifyDead()
+              }
+              private val onPerm = Shizuku.OnRequestPermissionResultListener { _, _ -> runOnUiThread { refreshStatus() } }
+
+              // ======================= Lifecycle =======================
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.statusBarColor = cBg
+                  window.navigationBarColor = cBg
+                  window.decorView.systemUiVisibility =
+                      View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                  prefs = getSharedPreferences("kreji", MODE_PRIVATE)
+                  createChannel()
+                  if (Build.VERSION.SDK_INT >= 33 &&
+                      checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
+                  }
+
+                  val root = FrameLayout(this)
+                  root.setBackgroundColor(cBg)
+                  pages += buildHome()
+                  pages += buildTools()
+                  pages += buildSettings()
+                  pages.forEach { root.addView(it, FrameLayout.LayoutParams(MATCH, MATCH)) }
+                  val navLp = FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM)
+                  navLp.setMargins(dp(28), 0, dp(28), dp(16))
+                  root.addView(buildNav(), navLp)
+                  setContentView(root)
+
+                  Shizuku.addBinderReceivedListenerSticky(onReceived)
+                  Shizuku.addBinderDeadListener(onDead)
+                  Shizuku.addRequestPermissionResultListener(onPerm)
+
+                  loadApps()
+                  TurboService.sync(this)
+                  show(0)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  h.post(tick)
+                  refreshStatus()
+                  refreshTools()
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  h.removeCallbacks(tick)
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  Shizuku.removeBinderReceivedListener(onReceived)
+                  Shizuku.removeBinderDeadListener(onDead)
+                  Shizuku.removeRequestPermissionResultListener(onPerm)
+              }
+
+              // ======================= Helper UI =======================
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+              private fun font(bold: Boolean): Typeface =
+                  Typeface.create(if (bold) "sans-serif-medium" else "sans-serif", Typeface.NORMAL)
+
+              private fun shape(color: Int, radius: Int, stroke: Int? = null): GradientDrawable =
+                  GradientDrawable().apply {
+                      setColor(color)
+                      cornerRadius = dp(radius).toFloat()
+                      if (stroke != null) setStroke(dp(1), stroke)
+                  }
+
+              private fun ripple(d: GradientDrawable): RippleDrawable =
+                  RippleDrawable(ColorStateList.valueOf(0x22000000), d, null)
+
+              private fun tv(text: String, size: Float = 14f, color: Int = cInk, bold: Boolean = false): TextView =
+                  TextView(this).apply {
+                      this.text = text
+                      textSize = size
+                      setTextColor(color)
+                      typeface = font(bold)
+                  }
+
+              private fun icon(res: Int, sizeDp: Int, color: Int): ImageView = ImageView(this).apply {
+                  setImageResource(res)
+                  setColorFilter(color)
+                  layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+              }
+
+              private fun lp(top: Int = 0): LinearLayout.LayoutParams =
+                  LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(top) }
+
+              private fun card(): LinearLayout = LinearLayout(this).apply {
+                  orientation = LinearLayout.VERTICAL
+                  background = shape(cCard, 24, cLine)
+                  setPadding(dp(18), dp(18), dp(18), dp(18))
+                  elevation = dp(1).toFloat()
+              }
+
+              private fun section(title: String): TextView =
+                  tv(title.uppercase(), 11f, cMuted, true).apply {
+                      letterSpacing = 0.14f
+                      setPadding(dp(4), 0, 0, 0)
+                  }
+
+              private fun btn(text: String, filled: Boolean = true, onClick: () -> Unit): TextView =
+                  TextView(this).apply {
+                      this.text = text
+                      gravity = Gravity.CENTER
+                      textSize = 14f
+                      typeface = font(true)
+                      setTextColor(if (filled) cWhite else cInk)
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                      background = ripple(shape(if (filled) cDark else cSoft, 16))
+                      setOnClickListener { onClick() }
+                  }
+
+              private fun linkRow(title: String, sub: String, onClick: () -> Unit): LinearLayout =
+                  LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(16), dp(13), dp(12), dp(13))
+                      background = ripple(shape(cSoft, 16))
+                      val c = LinearLayout(context).apply {
+                          orientation = LinearLayout.VERTICAL
+                          addView(tv(title, 14f, cInk, true))
+                          addView(tv(sub, 12f, cMuted))
+                      }
+                      addView(c, LinearLayout.LayoutParams(0, WRAP, 1f))
+                      addView(icon(R.drawable.ic_chevron, 20, cMuted))
+                      setOnClickListener { onClick() }
+                  }
+
+              private fun chipGroup(labels: List<String>, onPick: (Int) -> Unit): Pair<LinearLayout, Chips> {
+                  val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  val list = mutableListOf<TextView>()
+                  labels.forEachIndexed { i, l ->
+                      val b = TextView(this).apply {
+                          text = l
+                          gravity = Gravity.CENTER
+                          textSize = 13f
+                          typeface = font(true)
+                          setPadding(dp(6), dp(12), dp(6), dp(12))
+                          setOnClickListener { onPick(i) }
+                      }
+                      list += b
+                      row.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).apply { if (i > 0) leftMargin = dp(8) })
+                  }
+                  val c = Chips(list)
+                  mark(c, -1)
+                  return Pair(row, c)
+              }
+
+              private fun mark(c: Chips, sel: Int) {
+                  c.btns.forEachIndexed { i, b ->
+                      val on = i == sel
+                      b.background = ripple(shape(if (on) cDark else cSoft, 14))
+                      b.setTextColor(if (on) cWhite else cInk)
+                  }
+              }
+
+              private fun toggleRow(
+                  label: String, desc: String, checked: Boolean, needsShizuku: Boolean, onChange: (Boolean) -> Unit
+              ): Pair<LinearLayout, Switch> {
+                  val row = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      addView(tv(label, 14f, cInk, true))
+                      addView(tv(desc, 12f, cMuted), lp(2))
+                  }
+                  row.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f).apply { rightMargin = dp(12) })
+                  val sw = Switch(this)
+                  sw.isChecked = checked
+                  sw.trackTintList = ColorStateList(
+                      arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                      intArrayOf(cDark, 0xFFC9CED6.toInt())
+                  )
+                  sw.thumbTintList = ColorStateList.valueOf(cWhite)
+                  sw.setOnClickListener {
+                      if (needsShizuku && state() != 2) {
+                          sw.isChecked = !sw.isChecked
+                          toast(NEED)
+                      } else onChange(sw.isChecked)
+                  }
+                  row.addView(sw)
+                  return Pair(row, sw)
+              }
+
+              private fun pageShell(): Pair<ScrollView, LinearLayout> {
+                  val sv = ScrollView(this).apply {
+                      isVerticalScrollBarEnabled = false
+                      clipToPadding = false
+                  }
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(20), dp(22), dp(20), dp(120))
+                  }
+                  sv.addView(col, ViewGroup.LayoutParams(MATCH, WRAP))
+                  return Pair(sv, col)
+              }
+
+              private fun newInfo() = Info(tv("-", 18f, cInk, true), tv("", 12f, cMuted))
+
+              private fun infoCard(label: String, i: Info): LinearLayout = card().apply {
+                  setPadding(dp(16), dp(15), dp(16), dp(15))
+                  addView(tv(label.uppercase(), 10.5f, cMuted, true).apply { letterSpacing = 0.1f })
+                  addView(i.value, lp(7))
+                  addView(i.sub, lp(2))
+              }
+
+              private fun row2(a: View, b: View): LinearLayout = LinearLayout(this).apply {
+                  orientation = LinearLayout.HORIZONTAL
+                  addView(a, LinearLayout.LayoutParams(0, MATCH, 1f))
+                  addView(b, LinearLayout.LayoutParams(0, MATCH, 1f).apply { leftMargin = dp(12) })
+              }
+
+              private fun dot(color: Int, sizeDp: Int): View = View(this).apply {
+                  layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+                  background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+              }
+
+              private fun toast(m: String) = Toast.makeText(this, m, Toast.LENGTH_SHORT).show()
+
+              private fun openUrl(url: String) {
+                  try {
+                      startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                  } catch (e: Throwable) {
+                      toast("Tidak bisa membuka link")
+                  }
+              }
+
+              private fun openIntent(i: Intent) {
+                  try {
+                      startActivity(i)
+                  } catch (e: Throwable) {
+                      toast("Pengaturan tidak tersedia di HP ini")
+                  }
+              }
+
+              // ======================= Navigasi floating =======================
+
+              private fun buildNav(): LinearLayout {
+                  val nav = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      background = shape(cCard, 36, cLine)
+                      elevation = dp(14).toFloat()
+                      setPadding(dp(8), dp(8), dp(8), dp(8))
+                  }
+                  listOf(
+                      Pair(R.drawable.ic_home, "Home"),
+                      Pair(R.drawable.ic_tools, "Tools"),
+                      Pair(R.drawable.ic_settings, "Settings")
+                  ).forEachIndexed { i, (res, label) ->
+                      val item = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          gravity = Gravity.CENTER_HORIZONTAL
+                          setPadding(0, dp(9), 0, dp(8))
+                          addView(icon(res, 22, cMuted))
+                          addView(tv(label, 11f, cMuted, true).apply { gravity = Gravity.CENTER }, lp(3))
+                          setOnClickListener { show(i) }
+                      }
+                      nav.addView(item, LinearLayout.LayoutParams(0, WRAP, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+                      navs += item
+                  }
+                  return nav
+              }
+
+              private fun show(index: Int) {
+                  pages.forEachIndexed { i, p ->
+                      p.visibility = if (i == index) View.VISIBLE else View.GONE
+                      if (i == index) {
+                          p.alpha = 0f
+                          p.animate().alpha(1f).setDuration(180).start()
+                      }
+                  }
+                  navs.forEachIndexed { i, item ->
+                      val sel = i == index
+                      item.background = if (sel) shape(cDark, 28) else null
+                      (item.getChildAt(0) as ImageView).setColorFilter(if (sel) cWhite else cMuted)
+                      (item.getChildAt(1) as TextView).setTextColor(if (sel) cWhite else cMuted)
+                  }
+                  if (index == 2) refreshStatus()
+                  if (index == 1) {
+                      refreshTools()
+                      loadHeavy(false)
+                  }
+              }
+
+              // ======================= HOME =======================
+
+              private fun buildHome(): ScrollView {
+                  val (sv, col) = pageShell()
+
+                  val head = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  head.addView(tv("Kreji", 32f, cInk, true))
+                  head.addView(tv("TURBO", 11f, cWhite, true).apply {
+                      letterSpacing = 0.12f
+                      setPadding(dp(10), dp(4), dp(10), dp(4))
+                      background = shape(cDark, 10)
+                  }, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10); topMargin = dp(6) })
+                  col.addView(head)
+                  col.addView(tv("Performa maksimal, tetap terkendali", 13f, cMuted), lp(2))
+
+                  // pill status shizuku
+                  val pill = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(14), dp(10), dp(14), dp(10))
+                      background = ripple(shape(cCard, 20, cLine))
+                      setOnClickListener { show(2) }
+                  }
+                  pillDot = dot(cRed, 10)
+                  pill.addView(pillDot, LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(10) })
+                  pillText = tv("Shizuku", 13f, cInk, true)
+                  pill.addView(pillText, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  pill.addView(icon(R.drawable.ic_chevron, 18, cMuted))
+                  col.addView(pill, lp(18))
+
+                  col.addView(section("Info perangkat"), lp(26))
+                  iDevice = newInfo(); iAndroid = newInfo(); iBat = newInfo()
+                  iTemp = newInfo(); iScreen = newInfo(); iNet = newInfo()
+
+                  col.addView(row2(infoCard("Merek / Model", iDevice), infoCard("Android", iAndroid)), lp(10))
+
+                  // baterai + progress bar
+                  val batCard = infoCard("Baterai", iBat)
+                  val track = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      weightSum = 100f
+                      background = shape(cSoft, 4)
+                  }
+                  batFill = View(this).apply { background = shape(cDark, 4) }
+                  batRest = View(this)
+                  track.addView(batFill, LinearLayout.LayoutParams(0, dp(6), 0f))
+                  track.addView(batRest, LinearLayout.LayoutParams(0, dp(6), 100f))
+                  batCard.addView(track, lp(10))
+                  col.addView(row2(batCard, infoCard("Suhu", iTemp)), lp(12))
+                  col.addView(row2(infoCard("Layar", iScreen), infoCard("Jaringan", iNet)), lp(12))
+
+                  col.addView(section("Developer"), lp(26))
+                  val dev = card()
+                  val devTop = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  devTop.addView(tv("LK", 15f, cWhite, true).apply {
+                      gravity = Gravity.CENTER
+                      background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(cDark) }
+                  }, LinearLayout.LayoutParams(dp(46), dp(46)).apply { rightMargin = dp(14) })
+                  val devCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  devCol.addView(tv("LutfiKreji", 18f, cInk, true))
+                  devCol.addView(tv("Developer Kreji Turbo", 12f, cMuted))
+                  devTop.addView(devCol)
+                  dev.addView(devTop)
+                  dev.addView(linkRow("TikTok", "@lutfikreji") { openUrl(TIKTOK) }, lp(16))
+                  dev.addView(linkRow("Saluran Info", "LutfiKreji di WhatsApp") { openUrl(WA) }, lp(8))
+                  col.addView(dev, lp(10))
+                  return sv
+              }
+
+              private fun updateInfo() {
+                  iDevice.value.text = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+                  iDevice.sub.text = Build.MODEL
+                  iAndroid.value.text = "Android ${Build.VERSION.RELEASE}"
+                  iAndroid.sub.text = "API ${Build.VERSION.SDK_INT}"
+
+                  val b = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  if (b != null) {
+                      val lvl = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                      val sc = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                      val st = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                      val chg = st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL
+                      val pct = (if (sc > 0) lvl * 100 / sc else lvl).coerceIn(0, 100)
+                      iBat.value.text = "$pct%"
+                      iBat.sub.text = if (chg) "Sedang mengisi" else "Tidak mengisi"
+                      (batFill.layoutParams as LinearLayout.LayoutParams).weight = pct.toFloat()
+                      (batRest.layoutParams as LinearLayout.LayoutParams).weight = (100 - pct).toFloat()
+                      batFill.background = shape(if (pct <= 20 && !chg) cRed else cDark, 4)
+                      batFill.requestLayout()
+                      batRest.requestLayout()
+
+                      val t = b.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10f
+                      iTemp.value.text = String.format(Locale.US, "%.1f °C", t)
+                      iTemp.sub.text = if (t >= 40f) "Panas" else if (t >= 35f) "Hangat" else "Normal"
+                      iTemp.sub.setTextColor(if (t >= 40f) cRed else if (t >= 35f) cAmber else cMuted)
+                  }
+
+                  val dm = resources.displayMetrics
+                  @Suppress("DEPRECATION")
+                  val hz = windowManager.defaultDisplay.refreshRate
+                  iScreen.value.text = "${hz.roundToInt()} Hz"
+                  iScreen.sub.text = "${dm.widthPixels} x ${dm.heightPixels} · ${dm.densityDpi} dpi"
+
+                  val cm = getSystemService(ConnectivityManager::class.java)
+                  val net = cm.activeNetwork
+                  val nc = if (net != null) cm.getNetworkCapabilities(net) else null
+                  val mbps = if (nc != null) "${nc.linkDownstreamBandwidthKbps / 1000} Mbps" else ""
+                  when {
+                      nc == null -> { iNet.value.text = "Offline"; iNet.sub.text = "Tidak ada koneksi" }
+                      nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> { iNet.value.text = "Wi-Fi"; iNet.sub.text = mbps }
+                      nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> { iNet.value.text = "Seluler"; iNet.sub.text = mbps }
+                      nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> { iNet.value.text = "Ethernet"; iNet.sub.text = mbps }
+                      else -> { iNet.value.text = "Terhubung"; iNet.sub.text = mbps }
+                  }
+              }
+
+              // ======================= TOOLS =======================
+
+              private fun buildTools(): ScrollView {
+                  val (sv, col) = pageShell()
+                  col.addView(tv("Tools", 32f, cInk, true))
+                  col.addView(tv("Fitur Turbo, Boost, dan dasar lewat Shizuku", 13f, cMuted), lp(2))
+
+
+                  // --- Hero Boost ---
+                  val hero = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(20), dp(20), dp(20), dp(20))
+                      background = GradientDrawable(
+                          GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(0xFF3B82F6.toInt(), 0xFF1E40AF.toInt())
+                      ).apply { cornerRadius = dp(26).toFloat() }
+                      elevation = dp(3).toFloat()
+                  }
+                  hero.addView(tv("Boost sekarang", 22f, cWhite, true))
+                  hero.addView(tv("Tutup proses latar belakang dan bersihkan cache semua aplikasi dalam satu ketukan.", 13f, 0xCCFFFFFF.toInt()), lp(4))
+                  heroBtn = TextView(this).apply {
+                      text = "Mulai boost"
+                      gravity = Gravity.CENTER
+                      textSize = 15f
+                      typeface = font(true)
+                      setTextColor(cDark)
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                      background = ripple(shape(cWhite, 16))
+                      setOnClickListener { doBoost() }
+                  }
+                  hero.addView(heroBtn, lp(16))
+                  col.addView(hero, lp(22))
+
+
+                  col.addView(tv("FITUR TURBO", 11f, cMuted, true).apply {
+                      letterSpacing = 0.14f
+                      setPadding(dp(4), dp(28), 0, 0)
+                  })
+
+                  // --- Latar belakang ---
+                  col.addView(section("Latar belakang"), lp(12))
+                  val bgc = card()
+                  val (asRow, asSw) = toggleRow(
+                      "Auto-stop saat layar mati",
+                      "Tutup proses latar dan aplikasi pilihanmu setiap layar mati",
+                      prefs.getBoolean("autostop", false), false
+                  ) { on ->
+                      prefs.edit().putBoolean("autostop", on).apply()
+                      TurboService.sync(this)
+                  }
+                  swAutoStop = asSw
+                  bgc.addView(asRow)
+                  bgc.addView(divider())
+                  bgc.addView(pickRow("Aplikasi yang dihentikan", "stop_pkgs", "Pilih") {
+                      pickApps("Aplikasi yang dihentikan saat layar mati", "stop_pkgs")
+                  })
+                  bgc.addView(tv("Tanpa pilihan, hanya proses latar yang aman ditutup (am kill-all). Aplikasi chat dan musik sebaiknya jangan dipilih.", 11f, cMuted), lp(10))
+                  bgc.addView(divider())
+                  val (acRow, acSw) = toggleRow(
+                      "Auto compact aplikasi yang dipakai",
+                      "Tiap 5 menit, rapatkan memori aplikasi yang sedang terbuka (am compact)",
+                      prefs.getBoolean("autocompact", false), false
+                  ) { on ->
+                      prefs.edit().putBoolean("autocompact", on).apply()
+                      TurboService.sync(this)
+                  }
+                  swAutoCompact = acSw
+                  bgc.addView(acRow)
+                  bgc.addView(divider())
+                  bgc.addView(actionRow("Compact sekarang", "Pilih satu aplikasi untuk dirapatkan memorinya", "Pilih") {
+                      pickOne("Compact aplikasi") { a -> runSh("am compact full ${a.pkg} 0", "${a.label} dirapatkan") }
+                  })
+                  bgc.addView(tv("Selama fitur otomatis aktif, ada satu notifikasi tetap dari layanan latar belakang.", 11f, cMuted), lp(12))
+                  col.addView(bgc, lp(10))
+
+                  // --- Jaringan ---
+                  col.addView(section("Jaringan"), lp(26))
+                  val nw = card()
+                  val (nrRow, nrSw) = toggleRow(
+                      "Matikan network_recommendations",
+                      "Hentikan rekomendasi jaringan Wi-Fi otomatis dari sistem",
+                      false, true
+                  ) { off ->
+                      val v = if (off) 0 else 1
+                      runSh(
+                          "settings put global network_recommendations_enabled $v",
+                          if (off) "network_recommendations dimatikan" else "network_recommendations dihidupkan"
+                      ) { refreshTools() }
+                  }
+                  swNetRec = nrSw
+                  nw.addView(nrRow)
+                  nw.addView(divider())
+                  val (wsRow, wsSw) = toggleRow(
+                      "Matikan wifi_suspend_optimizations",
+                      "Wi-Fi tetap aktif penuh saat layar mati, lebih stabil tapi baterai sedikit lebih boros",
+                      false, true
+                  ) { off ->
+                      val v = if (off) 0 else 1
+                      runSh(
+                          "settings put global wifi_suspend_optimizations_enabled $v",
+                          if (off) "wifi_suspend_optimizations dimatikan" else "wifi_suspend_optimizations dihidupkan"
+                      ) { refreshTools() }
+                  }
+                  swWifiSus = wsSw
+                  nw.addView(wsRow)
+                  col.addView(nw, lp(10))
+
+                  // --- Daya dan memori ---
+                  col.addView(section("Daya dan memori"), lp(26))
+                  val pmc = card()
+                  pmc.addView(pickRow("Batasi WAKE_LOCK aplikasi boros", "wl_pkgs", "Pilih") {
+                      pickApps("Aplikasi yang dibatasi WAKE_LOCK", "wl_pkgs")
+                  })
+                  pmc.addView(twoBtns(
+                      "Terapkan batasan", { applySet("wl_pkgs", "cmd appops set %p WAKE_LOCK ignore", "Batasan WAKE_LOCK diterapkan") },
+                      "Pulihkan", { applySet("wl_pkgs", "cmd appops set %p WAKE_LOCK default", "Batasan WAKE_LOCK dipulihkan") }
+                  ), lp(12))
+                  pmc.addView(tv("Pilih aplikasi yang boros baterai di latar. Notifikasi aplikasi tersebut bisa tertunda.", 11f, cMuted), lp(8))
+                  pmc.addView(divider())
+                  pmc.addView(tv("Kirim trim-memory ke semua aplikasi", 14f, cInk, true))
+                  pmc.addView(tv("Minta semua aplikasi pengguna melepas memori yang tidak terpakai", 12f, cMuted), lp(2))
+                  pmc.addView(twoBtns(
+                      "Sedang", { trimAll("MODERATE") },
+                      "Agresif", { trimAll("COMPLETE") }
+                  ), lp(12))
+                  col.addView(pmc, lp(10))
+
+                  // --- Game ---
+                  col.addView(section("Game"), lp(26))
+                  val gm = card()
+                  gm.addView(pickRow("Game Mode Performance", "game_pkgs", "Pilih") {
+                      pickApps("Pilih game", "game_pkgs")
+                  })
+                  gm.addView(twoBtns(
+                      "Terapkan Performance", { applySet("game_pkgs", "cmd game mode performance %p", "Game Mode Performance diterapkan") },
+                      "Standard", { applySet("game_pkgs", "cmd game mode standard %p", "Dikembalikan ke Standard") }
+                  ), lp(12))
+                  gm.addView(tv("Butuh Android 12 ke atas. Berlaku per aplikasi yang dipilih.", 11f, cMuted), lp(8))
+                  col.addView(gm, lp(10))
+
+                  // --- Tampilan dan respons ---
+                  col.addView(section("Tampilan dan respons"), lp(26))
+                  val ds = card()
+                  val (hwRow, hwSw) = toggleRow(
+                      "Matikan HW overlays",
+                      "GPU menggambar semua lapisan layar. Kembali normal setelah HP restart.",
+                      prefs.getBoolean("hwoverlay", false), true
+                  ) { on ->
+                      runShRaw("service call SurfaceFlinger 1008 i32 ${if (on) 1 else 0}") { r ->
+                          if (r.startsWith("ERR")) {
+                              toast(r)
+                              swHw.isChecked = !on
+                          } else {
+                              prefs.edit().putBoolean("hwoverlay", on).apply()
+                              toast(if (on) "HW overlays dimatikan" else "HW overlays dihidupkan")
+                          }
+                      }
+                  }
+                  swHw = hwSw
+                  ds.addView(hwRow)
+                  ds.addView(divider())
+                  ds.addView(tv("Kecepatan pointer dan long-press", 15f, cInk, true))
+                  ds.addView(tv("Sentuhan tahan lebih cepat (bawaan 400 ms) dan pointer lebih gesit", 12f, cMuted), lp(2))
+                  val (ptRow, ptChips) = chipGroup(listOf("Normal", "Cepat", "Sangat cepat")) { i ->
+                      runSh(
+                          "settings put system pointer_speed ${pointerSp[i]}; settings put secure long_press_timeout ${longPress[i]}",
+                          "Respons diatur"
+                      ) { refreshTools() }
+                  }
+                  chPointer = ptChips
+                  ds.addView(ptRow, lp(12))
+                  ds.addView(divider())
+                  val (rrRow, rrSw) = toggleRow(
+                      "Profil refresh rate per aplikasi",
+                      "Atur refresh rate otomatis saat aplikasi tertentu dibuka",
+                      prefs.getBoolean("rrauto", false), false
+                  ) { on ->
+                      prefs.edit().putBoolean("rrauto", on).apply()
+                      TurboService.sync(this)
+                  }
+                  swRr = rrSw
+                  ds.addView(rrRow)
+                  rrBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  ds.addView(rrBox, lp(6))
+                  ds.addView(btn("Tambah profil", false) { addRr() }, lp(12))
+                  ds.addView(tv("Memakai min/peak refresh rate sistem, jadi hasilnya bergantung pada HP. Butuh layanan latar belakang aktif.", 11f, cMuted), lp(8))
+                  col.addView(ds, lp(10))
+                  renderRr()
+
+                  col.addView(tv("FITUR BOOST", 11f, cMuted, true).apply {
+                      letterSpacing = 0.14f
+                      setPadding(dp(4), dp(28), 0, 0)
+                  })
+
+                  // --- Otomatis ---
+                  col.addView(section("Otomatis"), lp(12))
+                  val au = card()
+                  val (autoRow, autoSw) = toggleRow(
+                      "Bersihkan cache otomatis",
+                      "Berjalan berkala di latar belakang",
+                      prefs.getBoolean("auto", false), false
+                  ) { on ->
+                      prefs.edit().putBoolean("auto", on).apply()
+                      AutoReceiver.schedule(this)
+                      toast(if (on) "Pembersihan otomatis dijadwalkan" else "Pembersihan otomatis dimatikan")
+                  }
+                  swAuto = autoSw
+                  au.addView(autoRow)
+                  au.addView(tv("Interval (X jam)", 15f, cInk, true), lp(18))
+                  val hoursList = listOf(1, 3, 6, 12)
+                  val (hRow, hChips) = chipGroup(listOf("1 jam", "3 jam", "6 jam", "12 jam")) { i ->
+                      prefs.edit().putInt("hours", hoursList[i]).apply()
+                      mark(chHours, i)
+                      if (prefs.getBoolean("auto", false)) AutoReceiver.schedule(this)
+                  }
+                  chHours = hChips
+                  au.addView(hRow, lp(10))
+                  vLast = tv("", 12f, cMuted)
+                  au.addView(vLast, lp(14))
+                  au.addView(tv("Butuh Shizuku aktif saat jadwal berjalan. Jika Shizuku mati, pembersihan dilewati.", 11f, cMuted), lp(6))
+                  col.addView(au, lp(10))
+
+                  // --- RAM ---
+                  col.addView(section("Aplikasi boros RAM"), lp(26))
+                  val rc = card()
+                  vRam = tv("RAM", 13f, cInk, true)
+                  rc.addView(vRam)
+                  rc.addView(tv("Aplikasi pengguna yang sedang berjalan, diurutkan dari yang paling besar.", 12f, cMuted), lp(2))
+                  heavyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  rc.addView(heavyBox, lp(8))
+                  rc.addView(btn("Muat ulang daftar", false) { loadHeavy(true) }, lp(12))
+                  col.addView(rc, lp(10))
+
+                  // --- Pemeliharaan ---
+                  col.addView(section("Pemeliharaan"), lp(26))
+                  val mt = card()
+                  mt.addView(actionRow("Hapus buffer log", "Kosongkan dan kecilkan buffer logcat ke 64K", "Jalankan") {
+                      runSh("logcat -c; logcat -G 64K", "Buffer log dibersihkan")
+                  })
+                  mt.addView(divider())
+                  mt.addView(actionRow("Pemeliharaan sistem", "Jalankan idle-maintenance Android", "Jalankan") {
+                      runSh("cmd activity idle-maintenance", "Pemeliharaan sistem dijalankan")
+                  })
+                  mt.addView(divider())
+                  mt.addView(actionRow("Rapikan penyimpanan", "Jalankan sm fstrim agar penyimpanan lebih lancar", "Rapikan") { b ->
+                      if (state() != 2) {
+                          toast(NEED)
+                      } else {
+                          b.text = "Proses"
+                          runShRaw("sm fstrim") { r ->
+                              b.text = "Rapikan"
+                              toast(if (r.startsWith("ERR")) r else "Penyimpanan dirapikan")
+                          }
+                      }
+                  })
+                  mt.addView(divider())
+                  mt.addView(actionRow("Reset statistik baterai", "Hapus data batterystats lama", "Reset") {
+                      AlertDialog.Builder(this)
+                          .setTitle("Reset statistik baterai")
+                          .setMessage("Statistik penggunaan baterai akan dihapus dan dihitung ulang dari awal. Lanjutkan?")
+                          .setPositiveButton("Reset") { _, _ -> runSh("dumpsys batterystats --reset", "Statistik baterai direset") }
+                          .setNegativeButton("Batal", null)
+                          .show()
+                  })
+                  mt.addView(divider())
+                  val (capRow, capSw) = toggleRow(
+                      "Matikan captive portal check",
+                      "Hentikan pengecekan koneksi internet otomatis oleh sistem",
+                      false, true
+                  ) { off ->
+                      val v = if (off) 0 else 1
+                      runSh(
+                          "settings put global captive_portal_mode $v; settings put global captive_portal_detection_enabled $v",
+                          if (off) "Captive portal check dimatikan" else "Captive portal check dihidupkan"
+                      ) { refreshTools() }
+                  }
+                  swCaptive = capSw
+                  mt.addView(capRow)
+                  col.addView(mt, lp(10))
+
+                  // --- Widget ---
+                  col.addView(section("Widget"), lp(26))
+                  val wd = card()
+                  wd.addView(tv("Widget Boost sekarang", 15f, cInk, true))
+                  wd.addView(tv("Satu tombol di layar utama untuk langsung boost tanpa membuka aplikasi.", 12f, cMuted), lp(2))
+                  wd.addView(btn("Pasang widget ke layar utama") { pinWidget() }, lp(14))
+                  col.addView(wd, lp(10))
+
+                  col.addView(tv("FITUR DASAR", 11f, cMuted, true).apply {
+                      letterSpacing = 0.14f
+                      setPadding(dp(4), dp(28), 0, 0)
+                  })
+
+                  // --- Aplikasi ---
+                  col.addView(section("Aplikasi terpasang"), lp(26))
+                  val appCard = card()
+                  appCard.addView(tv("Ketuk aplikasi untuk bersihkan cache atau Boost. Tombol Info membuka halaman info aplikasi.", 12f, cMuted))
+                  search = EditText(this).apply {
+                      hint = "Cari aplikasi"
+                      textSize = 14f
+                      setSingleLine()
+                      setTextColor(cInk)
+                      setHintTextColor(cMuted)
+                      setPadding(dp(16), dp(12), dp(16), dp(12))
+                      background = shape(cSoft, 16)
+                      addTextChangedListener(object : TextWatcher {
+                          override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                          override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                          override fun afterTextChanged(s: Editable?) { renderApps() }
+                      })
+                  }
+                  appCard.addView(search, lp(12))
+                  appBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  appBox.addView(tv("Memuat daftar aplikasi", 13f, cMuted).apply { setPadding(0, dp(12), 0, 0) })
+                  appCard.addView(appBox, lp(6))
+                  col.addView(appCard, lp(10))
+
+                  // --- Animasi ---
+                  col.addView(section("Animasi"), lp(26))
+                  val anim = card()
+                  anim.addView(tv("Skala animasi sistem", 15f, cInk, true))
+                  anim.addView(tv("Animasi 0.5x terasa lebih cepat dan responsif", 12f, cMuted), lp(2))
+                  val (animRow, animChips) = chipGroup(listOf("1x  Normal", "0.5x  Cepat")) { i ->
+                      val v = if (i == 0) "1" else "0.5"
+                      runSh(
+                          "settings put global window_animation_scale $v; settings put global transition_animation_scale $v; settings put global animator_duration_scale $v",
+                          "Animasi ${v}x diterapkan"
+                      ) { refreshTools() }
+                  }
+                  chAnim = animChips
+                  anim.addView(animRow, lp(14))
+                  col.addView(anim, lp(10))
+
+                  // --- Hemat daya ---
+                  col.addView(section("Hemat daya"), lp(26))
+                  val pw = card()
+                  val (scanRow, scanSw) = toggleRow(
+                      "Matikan scan Wi-Fi dan BLE",
+                      "Hentikan scan di latar saat Wi-Fi atau Bluetooth nonaktif",
+                      false, true
+                  ) { off ->
+                      val v = if (off) 0 else 1
+                      runSh(
+                          "settings put global wifi_scan_always_enabled $v; settings put global ble_scan_always_enabled $v",
+                          if (off) "Scan Wi-Fi dan BLE dimatikan" else "Scan Wi-Fi dan BLE dihidupkan"
+                      ) { refreshTools() }
+                  }
+                  swScan = scanSw
+                  pw.addView(scanRow)
+                  pw.addView(View(this).apply { setBackgroundColor(cLine) }, LinearLayout.LayoutParams(MATCH, dp(1)).apply {
+                      topMargin = dp(16); bottomMargin = dp(16)
+                  })
+                  pw.addView(tv("Mode hemat baterai", 15f, cInk, true))
+                  val (saverRow, saverChips) = chipGroup(listOf("Hidupkan", "Matikan")) { i ->
+                      val v = if (i == 0) 1 else 0
+                      runSh("settings put global low_power $v", if (i == 0) "Hemat baterai aktif" else "Hemat baterai nonaktif") { refreshTools() }
+                  }
+                  chSaver = saverChips
+                  pw.addView(saverRow, lp(10))
+                  pw.addView(tv("Timeout layar", 15f, cInk, true), lp(20))
+                  val (toRow, toChips) = chipGroup(listOf("15s", "30s", "1m", "2m")) { i ->
+                      runSh("settings put system screen_off_timeout ${timeouts[i]}", "Timeout layar diatur") { refreshTools() }
+                  }
+                  chTimeout = toChips
+                  pw.addView(toRow, lp(10))
+                  col.addView(pw, lp(10))
+
+                  // --- Kecerahan ---
+                  col.addView(section("Kecerahan"), lp(26))
+                  val br = card()
+                  br.addView(tv("Preset kecerahan cepat", 15f, cInk, true))
+                  br.addView(tv("Kecerahan otomatis dimatikan agar preset berlaku", 12f, cMuted), lp(2))
+                  val (brRow, brChips) = chipGroup(listOf("25%", "50%", "75%", "100%")) { i ->
+                      runSh(
+                          "settings put system screen_brightness_mode 0; settings put system screen_brightness ${brights[i]}",
+                          "Kecerahan diatur"
+                      ) { refreshTools() }
+                  }
+                  chBright = brChips
+                  br.addView(brRow, lp(14))
+                  col.addView(br, lp(10))
+
+                  // --- Pintasan ---
+                  col.addView(section("Pintasan pengaturan"), lp(26))
+                  val sc = card()
+                  sc.addView(linkRow("Baterai", "Penggunaan dan hemat daya") {
+                      openIntent(Intent("android.intent.action.POWER_USAGE_SUMMARY"))
+                  })
+                  sc.addView(linkRow("Penyimpanan", "Ruang dan isi penyimpanan") {
+                      openIntent(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
+                  }, lp(8))
+                  sc.addView(linkRow("Developer Options", "Opsi pengembang sistem") {
+                      openIntent(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                  }, lp(8))
+                  col.addView(sc, lp(10))
+
+                  // --- Terkunci ---
+                  col.addView(section("Fitur terkunci"), lp(26))
+                  val lk = card()
+                  lk.addView(tv("Buka lebih banyak fitur dengan tingkat Kreji yang lebih tinggi.", 12f, cMuted))
+                  val locked = listOf(
+                      Triple("Profil game dan Sensitivity GameLab", "ULTRA", 0xFF7C3AED.toInt()),
+                      Triple("Kunci refresh rate", "ULTRA", 0xFF7C3AED.toInt()),
+                      Triple("DPI dan resolusi", "ULTRA", 0xFF7C3AED.toInt()),
+                      Triple("Compile aplikasi", "ULTRA", 0xFF7C3AED.toInt()),
+                      Triple("Boost semua aplikasi", "EXTREME", 0xFFDC2626.toInt()),
+                      Triple("Jadwal otomatis", "EXTREME", 0xFFDC2626.toInt()),
+                      Triple("Widget melayang", "EXTREME", 0xFFDC2626.toInt())
+                  )
+                  locked.forEach { (name, tier, color) ->
+                      val r = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(dp(14), dp(13), dp(14), dp(13))
+                          background = ripple(shape(cSoft, 16))
+                          addView(icon(R.drawable.ic_lock, 18, cMuted), LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(12) })
+                          addView(tv(name, 14f, cInk, true), LinearLayout.LayoutParams(0, WRAP, 1f))
+                          addView(tv(tier, 10f, cWhite, true).apply {
+                              letterSpacing = 0.08f
+                              setPadding(dp(9), dp(4), dp(9), dp(4))
+                              background = shape(color, 10)
+                          })
+                          setOnClickListener { lockedDialog(name, tier) }
+                      }
+                      lk.addView(r, lp(8))
+                  }
+                  col.addView(lk, lp(10))
+                  return sv
+              }
+
+              private fun refreshTools() {
+                  if (!::chAnim.isInitialized) return
+                  try {
+                      val a = Settings.Global.getFloat(contentResolver, "window_animation_scale", 1f)
+                      mark(chAnim, if (a == 1f) 0 else if (a == 0.5f) 1 else -1)
+
+                      val lp = Settings.Global.getInt(contentResolver, "low_power", 0)
+                      mark(chSaver, if (lp == 1) 0 else 1)
+
+                      val t = Settings.System.getInt(contentResolver, "screen_off_timeout", -1)
+                      mark(chTimeout, timeouts.indexOf(t))
+
+                      val bv = Settings.System.getInt(contentResolver, "screen_brightness", -1)
+                      var best = -1
+                      var diff = 24
+                      brights.forEachIndexed { i, p -> if (abs(p - bv) < diff) { diff = abs(p - bv); best = i } }
+                      mark(chBright, best)
+
+                      swScan.isChecked = Settings.Global.getInt(contentResolver, "wifi_scan_always_enabled", 1) == 0 &&
+                          Settings.Global.getInt(contentResolver, "ble_scan_always_enabled", 1) == 0
+                      swNetRec.isChecked = Settings.Global.getInt(contentResolver, "network_recommendations_enabled", 1) == 0
+                      swWifiSus.isChecked = Settings.Global.getInt(contentResolver, "wifi_suspend_optimizations_enabled", 1) == 0
+                      swHw.isChecked = prefs.getBoolean("hwoverlay", false)
+                      swAutoStop.isChecked = prefs.getBoolean("autostop", false)
+                      swAutoCompact.isChecked = prefs.getBoolean("autocompact", false)
+                      swRr.isChecked = prefs.getBoolean("rrauto", false)
+                      mark(chPointer, longPress.indexOf(Settings.Secure.getInt(contentResolver, "long_press_timeout", 400)))
+                      refreshSums()
+                      renderRr()
+                      swCaptive.isChecked = Settings.Global.getInt(contentResolver, "captive_portal_mode", 1) == 0
+                      swAuto.isChecked = prefs.getBoolean("auto", false)
+                      mark(chHours, listOf(1, 3, 6, 12).indexOf(prefs.getInt("hours", 6)))
+                      val last = prefs.getLong("last_clean", 0L)
+                      vLast.text = if (last == 0L) "Belum pernah berjalan otomatis"
+                      else "Terakhir: " + SimpleDateFormat("dd MMM HH:mm", Locale("id")).format(Date(last)) +
+                          " (" + prefs.getString("last_res", "-") + ")"
+                  } catch (e: Throwable) {
+                  }
+              }
+
+              private fun lockedDialog(name: String, tier: String) {
+                  AlertDialog.Builder(this)
+                      .setTitle(name)
+                      .setMessage("Fitur ini terkunci dan tersedia di KREJI $tier.\n\nHubungi LutfiKreji untuk upgrade dan buka fitur terkunci.")
+                      .setPositiveButton("Hubungi di TikTok") { _, _ -> openUrl(TIKTOK) }
+                      .setNegativeButton("Tutup", null)
+                      .show()
+              }
+
+              // ---- daftar aplikasi ----
+
+              private fun loadApps() {
+                  Thread {
+                      val pm = packageManager
+                      val list = pm.getInstalledApplications(0)
+                          .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 && it.packageName != packageName }
+                          .map { ai ->
+                              var size = File(ai.sourceDir).length()
+                              (ai.splitSourceDirs ?: emptyArray()).forEach { size += File(it).length() }
+                              AppItem(pm.getApplicationLabel(ai).toString(), ai.packageName, size)
+                          }
+                          .sortedBy { it.label.lowercase() }
+                      apps = list
+                      runOnUiThread { renderApps() }
+                  }.start()
+              }
+
+              private fun fmt(b: Long): String = when {
+                  b >= 1L shl 30 -> String.format(Locale.US, "%.1f GB", b / 1073741824.0)
+                  b >= 1L shl 20 -> String.format(Locale.US, "%.0f MB", b / 1048576.0)
+                  else -> String.format(Locale.US, "%d KB", b / 1024)
+              }
+
+              private fun renderApps() {
+                  appBox.removeAllViews()
+                  val q = search.text.toString().trim().lowercase()
+                  val filtered = apps.filter { q.isEmpty() || it.label.lowercase().contains(q) || it.pkg.contains(q) }
+                  if (filtered.isEmpty()) {
+                      appBox.addView(
+                          tv(if (apps.isEmpty()) "Memuat daftar aplikasi" else "Tidak ada aplikasi yang cocok", 13f, cMuted)
+                              .apply { setPadding(0, dp(12), 0, 0) }
+                      )
+                      return
+                  }
+                  filtered.take(40).forEachIndexed { idx, a ->
+                      if (idx > 0) {
+                          appBox.addView(View(this).apply { setBackgroundColor(cLine) }, LinearLayout.LayoutParams(MATCH, dp(1)))
+                      }
+                      val r = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(dp(2), dp(11), dp(2), dp(11))
+                          setOnClickListener { appDialog(a) }
+                      }
+                      val ic = ImageView(this)
+                      try { ic.setImageDrawable(packageManager.getApplicationIcon(a.pkg)) } catch (e: Throwable) {}
+                      r.addView(ic, LinearLayout.LayoutParams(dp(42), dp(42)))
+                      val mid = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          addView(tv(a.label, 14f, cInk, true).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+                          addView(tv("${fmt(a.size)}  ·  ${a.pkg}", 11f, cMuted).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+                      }
+                      r.addView(mid, LinearLayout.LayoutParams(0, WRAP, 1f).apply { leftMargin = dp(12); rightMargin = dp(8) })
+                      r.addView(btn("Info", false) { openAppInfo(a.pkg) }.apply {
+                          textSize = 12f
+                          setPadding(dp(14), dp(8), dp(14), dp(8))
+                      })
+                      appBox.addView(r)
+                  }
+                  if (filtered.size > 40) {
+                      appBox.addView(
+                          tv("Menampilkan 40 dari ${filtered.size} aplikasi. Gunakan pencarian untuk menemukan yang lain.", 11f, cMuted)
+                              .apply { setPadding(0, dp(12), 0, 0) }
+                      )
+                  }
+              }
+
+              private fun openAppInfo(pkg: String) =
+                  openIntent(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
+
+              private fun appDialog(a: AppItem) {
+                  AlertDialog.Builder(this)
+                      .setTitle(a.label)
+                      .setItems(arrayOf("Bersihkan cache", "Boost (stop paksa lalu buka ulang)", "Info aplikasi")) { _, w ->
+                          when (w) {
+                              0 -> clearCache(a)
+                              1 -> boost(a)
+                              2 -> openAppInfo(a.pkg)
+                          }
+                      }
+                      .show()
+              }
+
+              private fun clearCache(a: AppItem) {
+                  val p = a.pkg
+                  runSh(
+                      "rm -rf /sdcard/Android/data/$p/cache/* /sdcard/Android/data/$p/code_cache/* /sdcard/Android/media/$p/cache/* 2>/dev/null; echo done",
+                      "Cache ${a.label} dibersihkan"
+                  )
+              }
+
+              private fun boost(a: AppItem) {
+                  runShRaw("am force-stop ${a.pkg}") { r ->
+                      if (r.startsWith("ERR")) toast(r) else {
+                          val i = packageManager.getLaunchIntentForPackage(a.pkg)
+                          if (i != null) {
+                              toast("${a.label} di-boost")
+                              startActivity(i)
+                          } else toast("Aplikasi dihentikan, tapi tidak bisa dibuka ulang")
+                      }
+                  }
+              }
+
+              // ======================= Turbo: helper =======================
+
+              private fun labelOf(pkg: String): String = apps.firstOrNull { it.pkg == pkg }?.label ?: pkg
+
+              private fun pkgSet(key: String): MutableSet<String> =
+                  HashSet<String>(prefs.getStringSet(key, emptySet<String>()) ?: emptySet<String>())
+
+              private fun safePkgs(key: String): List<String> {
+                  val ok = Regex("[A-Za-z0-9_.]+")
+                  return pkgSet(key).filter { ok.matches(it) }
+              }
+
+              private fun pickRow(title: String, key: String, btnLabel: String, onClick: () -> Unit): LinearLayout {
+                  val row = actionRow(title, "", btnLabel) { onClick() }
+                  val desc = (row.getChildAt(0) as LinearLayout).getChildAt(1) as TextView
+                  sums[key] = desc
+                  return row
+              }
+
+              private fun refreshSums() {
+                  sums.forEach { (key, view) ->
+                      val set = pkgSet(key)
+                      view.text = if (set.isEmpty()) "Belum ada yang dipilih"
+                      else "${set.size} dipilih: " + set.take(3).joinToString(", ") { labelOf(it) } + (if (set.size > 3) " ..." else "")
+                  }
+              }
+
+              private fun pickApps(title: String, key: String) {
+                  if (apps.isEmpty()) {
+                      toast("Daftar aplikasi belum siap, coba lagi sebentar")
+                      return
+                  }
+                  val list = apps
+                  val cur = pkgSet(key)
+                  val checked = BooleanArray(list.size) { cur.contains(list[it].pkg) }
+                  AlertDialog.Builder(this)
+                      .setTitle(title)
+                      .setMultiChoiceItems(list.map { it.label }.toTypedArray(), checked) { _, i, on -> checked[i] = on }
+                      .setPositiveButton("Simpan") { _, _ ->
+                          val set = HashSet<String>()
+                          list.forEachIndexed { i, a -> if (checked[i]) set.add(a.pkg) }
+                          prefs.edit().putStringSet(key, set).apply()
+                          refreshSums()
+                      }
+                      .setNegativeButton("Batal", null)
+                      .show()
+              }
+
+              private fun pickOne(title: String, onPick: (AppItem) -> Unit) {
+                  if (apps.isEmpty()) {
+                      toast("Daftar aplikasi belum siap, coba lagi sebentar")
+                      return
+                  }
+                  val list = apps
+                  AlertDialog.Builder(this)
+                      .setTitle(title)
+                      .setItems(list.map { it.label }.toTypedArray()) { _, i -> onPick(list[i]) }
+                      .setNegativeButton("Batal", null)
+                      .show()
+              }
+
+              private fun twoBtns(aLabel: String, aClick: () -> Unit, bLabel: String, bClick: () -> Unit): LinearLayout =
+                  LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      addView(btn(aLabel, true, aClick), LinearLayout.LayoutParams(0, WRAP, 1f))
+                      addView(btn(bLabel, false, bClick), LinearLayout.LayoutParams(0, WRAP, 1f).apply { leftMargin = dp(8) })
+                  }
+
+              private fun applySet(key: String, template: String, ok: String) {
+                  val l = safePkgs(key)
+                  if (l.isEmpty()) {
+                      toast("Pilih aplikasi dulu")
+                      return
+                  }
+                  runSh(l.joinToString("; ") { template.replace("%p", it) }, ok)
+              }
+
+              private fun trimAll(level: String) = runSh(
+                  "pm list packages -3 | cut -d: -f2 | while read p; do am send-trim-memory --user 0 \$p $level >/dev/null 2>&1; done; echo done",
+                  "Trim-memory dikirim ke semua aplikasi"
+              )
+
+              private fun saveRr(m: Map<String, Int>) {
+                  prefs.edit().putString("rr_map", m.entries.joinToString(";") { "${it.key}=${it.value}" }).apply()
+              }
+
+              private fun renderRr() {
+                  if (!::rrBox.isInitialized) return
+                  rrBox.removeAllViews()
+                  val m = parseRr(prefs.getString("rr_map", ""))
+                  if (m.isEmpty()) {
+                      rrBox.addView(tv("Belum ada profil. Tekan Tambah profil.", 12f, cMuted).apply { setPadding(0, dp(10), 0, 0) })
+                      return
+                  }
+                  m.entries.toList().forEachIndexed { idx, e ->
+                      if (idx > 0) rrBox.addView(View(this).apply { setBackgroundColor(cLine) }, LinearLayout.LayoutParams(MATCH, dp(1)))
+                      val r = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(dp(2), dp(10), dp(2), dp(10))
+                      }
+                      val c = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          addView(tv(labelOf(e.key), 14f, cInk, true).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+                          addView(tv("${e.value} Hz", 12f, cMuted))
+                      }
+                      r.addView(c, LinearLayout.LayoutParams(0, WRAP, 1f).apply { rightMargin = dp(8) })
+                      r.addView(btn("Hapus", false) {
+                          val cur = parseRr(prefs.getString("rr_map", ""))
+                          cur.remove(e.key)
+                          saveRr(cur)
+                          renderRr()
+                      }.apply {
+                          textSize = 12f
+                          setPadding(dp(14), dp(8), dp(14), dp(8))
+                      })
+                      rrBox.addView(r)
+                  }
+              }
+
+              private fun addRr() {
+                  pickOne("Pilih aplikasi") { a ->
+                      @Suppress("DEPRECATION")
+                      val rates = windowManager.defaultDisplay.supportedModes
+                          .map { it.refreshRate.roundToInt() }.distinct().sorted()
+                      AlertDialog.Builder(this)
+                          .setTitle("Refresh rate untuk ${a.label}")
+                          .setItems(rates.map { "$it Hz" }.toTypedArray()) { _, i ->
+                              val cur = parseRr(prefs.getString("rr_map", ""))
+                              cur[a.pkg] = rates[i]
+                              saveRr(cur)
+                              renderRr()
+                          }
+                          .setNegativeButton("Batal", null)
+                          .show()
+                  }
+              }
+
+              // ======================= Boost: helper =======================
+
+              private fun divider(): View = View(this).apply {
+                  setBackgroundColor(cLine)
+                  layoutParams = LinearLayout.LayoutParams(MATCH, dp(1)).apply { topMargin = dp(14); bottomMargin = dp(14) }
+              }
+
+              private fun actionRow(title: String, desc: String, label: String, onClick: (TextView) -> Unit): LinearLayout {
+                  val row = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  val c = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      addView(tv(title, 14f, cInk, true))
+                      addView(tv(desc, 12f, cMuted), lp(2))
+                  }
+                  row.addView(c, LinearLayout.LayoutParams(0, WRAP, 1f).apply { rightMargin = dp(12) })
+                  lateinit var b: TextView
+                  b = btn(label, false) { onClick(b) }.apply {
+                      textSize = 12f
+                      setPadding(dp(16), dp(9), dp(16), dp(9))
+                  }
+                  row.addView(b)
+                  return row
+              }
+
+              private fun doBoost() {
+                  if (state() != 2) {
+                      toast(NEED)
+                      return
+                  }
+                  heroBtn.text = "Memproses..."
+                  Thread {
+                      val r = Sh.boostNow()
+                      runOnUiThread {
+                          heroBtn.text = "Mulai boost"
+                          toast(if (r.startsWith("ERR")) r else "Boost selesai")
+                          loadHeavy(true)
+                      }
+                  }.start()
+              }
+
+              private fun pinWidget() {
+                  try {
+                      val awm = getSystemService(android.appwidget.AppWidgetManager::class.java)
+                      if (awm.isRequestPinAppWidgetSupported) {
+                          awm.requestPinAppWidget(android.content.ComponentName(this, BoostWidget::class.java), null, null)
+                      } else {
+                          toast("Tambahkan lewat menu Widget di layar utama, cari Kreji Turbo")
+                      }
+                  } catch (e: Throwable) {
+                      toast("Tambahkan lewat menu Widget di layar utama, cari Kreji Turbo")
+                  }
+              }
+
+              private fun gb(b: Long): String = String.format(Locale.US, "%.1f GB", b / 1073741824.0)
+
+              private fun loadHeavy(force: Boolean) {
+                  if (state() != 2) {
+                      renderHeavy("Aktifkan Shizuku untuk melihat daftar aplikasi")
+                      return
+                  }
+                  if (!force && heavy.isNotEmpty() && System.currentTimeMillis() - heavyAt < 20000) return
+                  renderHeavy("Memuat daftar...")
+                  Thread {
+                      val out = sh("dumpsys meminfo")
+                      val map = HashMap<String, Int>()
+                      val rx = Regex("^\\s*([\\d.,]+)K:\\s+(\\S+)\\s+\\(pid")
+                      var inPss = false
+                      out.lineSequence().forEach { ln ->
+                          if (ln.startsWith("Total PSS by process")) inPss = true
+                          else if (ln.startsWith("Total PSS by OOM")) inPss = false
+                          else if (inPss) {
+                              val m = rx.find(ln)
+                              if (m != null) {
+                                  val kb = m.groupValues[1].replace(Regex("[^0-9]"), "").toLongOrNull() ?: 0L
+                                  val pkg = m.groupValues[2].substringBefore(':')
+                                  map[pkg] = (map[pkg] ?: 0) + (kb / 1024).toInt()
+                              }
+                          }
+                      }
+                      val pm = packageManager
+                      val list = map.entries.mapNotNull { e ->
+                          try {
+                              val ai = pm.getApplicationInfo(e.key, 0)
+                              if ((ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0 || e.key == packageName) null
+                              else Heavy(pm.getApplicationLabel(ai).toString(), e.key, e.value)
+                          } catch (t: Throwable) {
+                              null
+                          }
+                      }.sortedByDescending { it.mb }.take(12)
+                      heavy = list
+                      heavyAt = System.currentTimeMillis()
+                      runOnUiThread { renderHeavy(null) }
+                  }.start()
+              }
+
+              private fun renderHeavy(msg: String?) {
+                  if (!::heavyBox.isInitialized) return
+                  try {
+                      val mi = ActivityManager.MemoryInfo()
+                      getSystemService(ActivityManager::class.java).getMemoryInfo(mi)
+                      vRam.text = "RAM bebas ${gb(mi.availMem)} dari ${gb(mi.totalMem)}"
+                  } catch (e: Throwable) {
+                  }
+                  heavyBox.removeAllViews()
+                  if (msg != null || heavy.isEmpty()) {
+                      heavyBox.addView(tv(msg ?: "Tidak ada aplikasi pengguna yang berjalan di latar belakang", 13f, cMuted).apply {
+                          setPadding(0, dp(10), 0, 0)
+                      })
+                      return
+                  }
+                  heavy.forEachIndexed { idx, a ->
+                      if (idx > 0) heavyBox.addView(View(this).apply { setBackgroundColor(cLine) }, LinearLayout.LayoutParams(MATCH, dp(1)))
+                      val r = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(dp(2), dp(10), dp(2), dp(10))
+                      }
+                      val ic = ImageView(this)
+                      try { ic.setImageDrawable(packageManager.getApplicationIcon(a.pkg)) } catch (e: Throwable) {}
+                      r.addView(ic, LinearLayout.LayoutParams(dp(40), dp(40)))
+                      val mid = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          addView(tv(a.label, 14f, cInk, true).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+                          addView(tv("${a.mb} MB", 12f, cMuted))
+                      }
+                      r.addView(mid, LinearLayout.LayoutParams(0, WRAP, 1f).apply { leftMargin = dp(12); rightMargin = dp(8) })
+                      r.addView(btn("Stop") {
+                          runSh("am force-stop ${a.pkg}", "${a.label} dihentikan") {
+                              heavy = heavy.filter { it.pkg != a.pkg }
+                              renderHeavy(null)
+                          }
+                      }.apply {
+                          textSize = 12f
+                          setPadding(dp(16), dp(8), dp(16), dp(8))
+                      })
+                      heavyBox.addView(r)
+                  }
+              }
+
+              // ======================= SETTINGS =======================
+
+              private fun stepRow(n: Int, text: String): LinearLayout = LinearLayout(this).apply {
+                  orientation = LinearLayout.HORIZONTAL
+                  addView(tv("$n", 12f, cInk, true).apply {
+                      gravity = Gravity.CENTER
+                      background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(cSoft) }
+                  }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(12); topMargin = dp(1) })
+                  addView(tv(text, 13f, cMuted), LinearLayout.LayoutParams(0, WRAP, 1f))
+              }
+
+              private fun buildSettings(): ScrollView {
+                  val (sv, col) = pageShell()
+                  col.addView(tv("Settings", 32f, cInk, true))
+                  col.addView(tv("Hubungkan Kreji Turbo dengan Shizuku", 13f, cMuted), lp(2))
+
+                  col.addView(section("Status Shizuku"), lp(26))
+                  val sc = card()
+                  val top = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  vDot = View(this)
+                  top.addView(vDot, LinearLayout.LayoutParams(dp(14), dp(14)).apply { rightMargin = dp(14) })
+                  val tcol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  vState = tv("-", 22f, cInk, true)
+                  vStateSub = tv("", 12f, cMuted)
+                  tcol.addView(vState)
+                  tcol.addView(vStateSub)
+                  top.addView(tcol)
+                  sc.addView(top)
+                  sc.addView(btn("Beri akses Shizuku") { requestAccess() }, lp(18))
+                  sc.addView(btn("Buka aplikasi Shizuku", false) { openShizuku() }, lp(8))
+                  col.addView(sc, lp(10))
+
+                  col.addView(section("Panduan aktifkan"), lp(26))
+                  val g = card()
+                  g.addView(tv("Lewat Wireless Debugging", 15f, cInk, true))
+                  g.addView(tv("Tanpa root, Android 11 ke atas", 12f, cMuted), lp(2))
+                  val steps = listOf(
+                      "Pasang Shizuku dari Play Store.",
+                      "Hubungkan ke Wi-Fi, lalu aktifkan Developer Options dan Wireless debugging.",
+                      "Buka Shizuku, pilih Pairing, lalu masukkan kode pairing lewat notifikasi.",
+                      "Kembali ke Shizuku dan tekan Start.",
+                      "Buka Kreji Turbo dan tekan Beri akses."
+                  )
+                  steps.forEachIndexed { i, s -> g.addView(stepRow(i + 1, s), lp(if (i == 0) 14 else 10)) }
+                  g.addView(tv("Tanpa root, Shizuku perlu di-Start ulang setiap HP restart.", 12f, cMuted), lp(12))
+                  g.addView(View(this).apply { setBackgroundColor(cLine) }, LinearLayout.LayoutParams(MATCH, dp(1)).apply {
+                      topMargin = dp(16); bottomMargin = dp(16)
+                  })
+                  g.addView(tv("Versi Root", 15f, cInk, true))
+                  g.addView(
+                      tv("Buka Shizuku, pilih Start (for rooted devices), lalu izinkan akses root. Shizuku akan menyala otomatis setiap HP hidup.", 13f, cMuted),
+                      lp(6)
+                  )
+                  col.addView(g, lp(10))
+
+                  col.addView(section("Notifikasi"), lp(26))
+                  val n = card()
+                  val (notifRow, _) = toggleRow(
+                      "Beritahu kalau Shizuku mati",
+                      "Notifikasi otomatis saat koneksi Shizuku terputus",
+                      prefs.getBoolean("notif", true), false
+                  ) { prefs.edit().putBoolean("notif", it).apply() }
+                  n.addView(notifRow)
+                  col.addView(n, lp(10))
+
+                  col.addView(section("Tes koneksi"), lp(26))
+                  val t = card()
+                  t.addView(tv("Jalankan perintah uji lewat Shizuku dan lihat hasilnya.", 12f, cMuted))
+                  t.addView(btn("Tes koneksi") { testConnection() }, lp(14))
+                  vTest = tv("Belum dites", 12f, cMuted).apply {
+                      typeface = Typeface.MONOSPACE
+                      setPadding(dp(14), dp(12), dp(14), dp(12))
+                      background = shape(cSoft, 14)
+                      setTextIsSelectable(true)
+                  }
+                  t.addView(vTest, lp(12))
+                  col.addView(t, lp(10))
+                  return sv
+              }
+
+              private fun refreshStatus() {
+                  val s = state()
+                  val color = when (s) { 2 -> cGreen; 1 -> cAmber; else -> cRed }
+                  val label = when (s) { 2 -> "Aktif"; 1 -> "Belum diizinkan"; else -> "Mati" }
+                  val sub = when (s) {
+                      2 -> "Terhubung dan sudah diizinkan"
+                      1 -> "Shizuku menyala, tekan Beri akses"
+                      else -> "Shizuku belum berjalan"
+                  }
+                  if (::pillDot.isInitialized) {
+                      pillDot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+                      pillText.text = "Shizuku  ·  $label"
+                  }
+                  if (!::vState.isInitialized) return
+                  vDot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+                  vState.text = label
+                  vState.setTextColor(color)
+                  vStateSub.text = sub
+              }
+
+              private fun requestAccess() {
+                  when (state()) {
+                      0 -> toast("Shizuku belum menyala. Buka Shizuku lalu tekan Start.")
+                      1 -> try {
+                          Shizuku.requestPermission(100)
+                      } catch (e: Throwable) {
+                          toast("Gagal meminta akses: ${e.message}")
+                      }
+                      else -> toast("Akses sudah diberikan")
+                  }
+              }
+
+              private fun openShizuku() {
+                  val i = packageManager.getLaunchIntentForPackage(SHIZUKU_PKG)
+                  if (i != null) startActivity(i)
+                  else {
+                      toast("Shizuku belum terpasang")
+                      openUrl("https://play.google.com/store/apps/details?id=$SHIZUKU_PKG")
+                  }
+              }
+
+              private fun testConnection() {
+                  if (state() != 2) {
+                      vTest.text = "Gagal: Shizuku belum aktif atau belum diizinkan"
+                      vTest.setTextColor(cRed)
+                      return
+                  }
+                  vTest.text = "Menjalankan tes..."
+                  vTest.setTextColor(cMuted)
+                  Thread {
+                      val t0 = System.currentTimeMillis()
+                      val out = sh("id; echo \"model: \$(getprop ro.product.model)\"; echo \"android: \$(getprop ro.build.version.release)\"")
+                      val ms = System.currentTimeMillis() - t0
+                      runOnUiThread {
+                          val ok = !out.startsWith("ERR")
+                          vTest.text = (if (ok) "Berhasil, terhubung ($ms ms)\n" else "Gagal\n") + out
+                          vTest.setTextColor(if (ok) 0xFF15803D.toInt() else cRed)
+                      }
+                  }.start()
+              }
+
+              // ======================= Shizuku core =======================
+
+              private fun state(): Int = Sh.state()
+
+              private fun sh(cmd: String): String = Sh.exec(cmd)
+
+              private fun runShRaw(cmd: String, done: (String) -> Unit) {
+                  if (state() != 2) {
+                      toast(NEED)
+                      return
+                  }
+                  Thread {
+                      val r = sh(cmd)
+                      runOnUiThread { done(r) }
+                  }.start()
+              }
+
+              private fun runSh(cmd: String, ok: String, onOk: (() -> Unit)? = null) {
+                  runShRaw(cmd) { r ->
+                      if (r.startsWith("ERR")) toast(r) else {
+                          toast(ok)
+                          onOk?.invoke()
+                      }
+                  }
+              }
+
+              // ======================= Notifikasi =======================
+
+              private fun createChannel() {
+                  val ch = NotificationChannel(CH, "Status Shizuku", NotificationManager.IMPORTANCE_HIGH)
+                  getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+              }
+
+              private fun notifyDead() {
+                  val pi = PendingIntent.getActivity(
+                      this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val n = Notification.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                      .setContentTitle("Shizuku mati")
+                      .setContentText("Fitur Kreji Turbo tidak bisa dipakai. Buka Shizuku lalu Start lagi.")
+                      .setContentIntent(pi)
+                      .setAutoCancel(true)
+                      .build()
+                  try {
+                      getSystemService(NotificationManager::class.java).notify(7, n)
+                  } catch (e: Throwable) {
+                  }
+              }
+          }
+          KREJI_EOF_5
+          mkdir -p app/src/main/java/com/lutfikreji/krejiturbo
+          cat > app/src/main/java/com/lutfikreji/krejiturbo/Shell.kt <<'KREJI_EOF_6'
+          package com.lutfikreji.krejiturbo
+
+          import android.app.AlarmManager
+          import android.app.PendingIntent
+          import android.appwidget.AppWidgetManager
+          import android.appwidget.AppWidgetProvider
+          import android.content.BroadcastReceiver
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.IntentFilter
+          import android.content.pm.PackageManager
+          import android.content.pm.ServiceInfo
+          import android.os.Build
+          import android.os.Handler
+          import android.os.HandlerThread
+          import android.os.IBinder
+          import android.os.SystemClock
+          import android.widget.RemoteViews
+          import rikka.shizuku.Shizuku
+
+          /** Akses shell lewat Shizuku, dipakai oleh Activity, alarm, dan widget. */
+          object Sh {
+              /** 0 = mati, 1 = belum diizinkan, 2 = aktif */
+              fun state(): Int = try {
+                  if (!Shizuku.pingBinder()) 0
+                  else if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) 2
+                  else 1
+              } catch (e: Throwable) {
+                  0
+              }
+
+              fun waitReady(ms: Long): Boolean {
+                  val end = SystemClock.elapsedRealtime() + ms
+                  while (SystemClock.elapsedRealtime() < end) {
+                      if (state() == 2) return true
+                      try { Thread.sleep(300) } catch (e: InterruptedException) { break }
+                  }
+                  return state() == 2
+              }
+
+              fun exec(cmd: String): String {
+                  return try {
+                      if (state() != 2) return "ERR: Shizuku belum aktif"
+                      val m = Shizuku::class.java.getDeclaredMethod(
+                          "newProcess",
+                          Array<String>::class.java,
+                          Array<String>::class.java,
+                          String::class.java
+                      )
+                      m.isAccessible = true
+                      val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+                      val out = p.inputStream.bufferedReader().readText()
+                      val err = p.errorStream.bufferedReader().readText()
+                      p.waitFor()
+                      (out + err).trim()
+                  } catch (e: Throwable) {
+                      "ERR: ${e.cause?.message ?: e.message}"
+                  }
+              }
+
+              /** Boost sekarang: tutup proses latar yang aman dan bersihkan cache semua aplikasi. */
+              fun boostNow(): String = exec("am kill-all; pm trim-caches 999G; echo done")
+
+              /** Paket aplikasi yang sedang di layar (fokus jendela). */
+              fun foregroundPkg(): String {
+                  val out = exec("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+                  val m = Regex(" u\\d+ ([A-Za-z0-9_.]+)/").find(out)
+                  return m?.groupValues?.get(1) ?: ""
+              }
+
+              /** Atur refresh rate (Hz), atau null untuk kembali ke bawaan sistem. */
+              fun setRefresh(hz: Int?): String =
+                  if (hz == null) exec("settings delete system min_refresh_rate; settings delete system peak_refresh_rate")
+                  else exec("settings put system min_refresh_rate $hz; settings put system peak_refresh_rate $hz")
+          }
+
+          /** "pkg=90;pkg2=60" menjadi peta paket ke Hz. */
+          fun parseRr(s: String?): LinkedHashMap<String, Int> {
+              val m = LinkedHashMap<String, Int>()
+              s.orEmpty().split(";").forEach { part ->
+                  val kv = part.split("=")
+                  if (kv.size == 2) kv[1].toIntOrNull()?.let { m[kv[0]] = it }
+              }
+              return m
+          }
+
+          /** Alarm berkala: bersihkan cache otomatis tiap X jam. */
+          class AutoReceiver : BroadcastReceiver() {
+              companion object {
+                  const val ACT = "com.lutfikreji.krejiturbo.AUTO_CLEAN"
+
+                  fun schedule(ctx: Context) {
+                      val am = ctx.getSystemService(AlarmManager::class.java)
+                      val pi = PendingIntent.getBroadcast(
+                          ctx, 1,
+                          Intent(ctx, AutoReceiver::class.java).setAction(ACT),
+                          PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                      )
+                      val p = ctx.getSharedPreferences("kreji", Context.MODE_PRIVATE)
+                      am.cancel(pi)
+                      if (p.getBoolean("auto", false)) {
+                          val ms = p.getInt("hours", 6) * 3600_000L
+                          am.setInexactRepeating(
+                              AlarmManager.ELAPSED_REALTIME,
+                              SystemClock.elapsedRealtime() + ms,
+                              ms,
+                              pi
+                          )
+                      }
+                  }
+              }
+
+              override fun onReceive(ctx: Context, intent: Intent) {
+                  if (intent.action != ACT) return
+                  val pr = goAsync()
+                  Thread {
+                      try {
+                          val r = if (Sh.waitReady(6000)) Sh.exec("pm trim-caches 999G; echo done") else "ERR: Shizuku mati"
+                          ctx.getSharedPreferences("kreji", Context.MODE_PRIVATE).edit()
+                              .putLong("last_clean", System.currentTimeMillis())
+                              .putString("last_res", if (r.startsWith("ERR")) "Gagal" else "Berhasil")
+                              .apply()
+                      } finally {
+                          pr.finish()
+                      }
+                  }.start()
+              }
+          }
+
+          /** Jadwalkan ulang alarm setelah HP restart. */
+          class BootReceiver : BroadcastReceiver() {
+              override fun onReceive(ctx: Context, intent: Intent) {
+                  if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+                      AutoReceiver.schedule(ctx)
+                      TurboService.sync(ctx)
+                  }
+              }
+          }
+
+          /** Widget satu tombol "Boost sekarang". */
+          class BoostWidget : AppWidgetProvider() {
+              companion object {
+                  const val ACT = "com.lutfikreji.krejiturbo.BOOST_NOW"
+              }
+
+              private fun views(ctx: Context, text: String): RemoteViews {
+                  val rv = RemoteViews(ctx.packageName, R.layout.widget_boost)
+                  rv.setTextViewText(R.id.widget_btn, text)
+                  val pi = PendingIntent.getBroadcast(
+                      ctx, 2,
+                      Intent(ctx, BoostWidget::class.java).setAction(ACT),
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                  )
+                  rv.setOnClickPendingIntent(R.id.widget_btn, pi)
+                  return rv
+              }
+
+              override fun onUpdate(ctx: Context, m: AppWidgetManager, ids: IntArray) {
+                  ids.forEach { m.updateAppWidget(it, views(ctx, "Boost sekarang")) }
+              }
+
+              override fun onReceive(ctx: Context, intent: Intent) {
+                  super.onReceive(ctx, intent)
+                  if (intent.action != ACT) return
+                  val pr = goAsync()
+                  val m = AppWidgetManager.getInstance(ctx)
+                  val ids = m.getAppWidgetIds(ComponentName(ctx, BoostWidget::class.java))
+                  fun set(t: String) {
+                      ids.forEach { m.updateAppWidget(it, views(ctx, t)) }
+                  }
+                  Thread {
+                      var finished = false
+                      try {
+                          set("Memproses...")
+                          val ok = Sh.waitReady(6000)
+                          val r = if (ok) Sh.boostNow() else "ERR"
+                          set(if (ok && !r.startsWith("ERR")) "Selesai" else "Shizuku mati")
+                          pr.finish()
+                          finished = true
+                          Thread.sleep(3000)
+                          set("Boost sekarang")
+                      } catch (e: Throwable) {
+                      } finally {
+                          if (!finished) pr.finish()
+                      }
+                  }.start()
+              }
+          }
+
+          /** Layanan latar: auto-stop saat layar mati, auto compact, dan profil refresh rate per aplikasi. */
+          class TurboService : Service() {
+              companion object {
+                  const val CH = "kreji_service"
+
+                  fun sync(ctx: Context) {
+                      val p = ctx.getSharedPreferences("kreji", Context.MODE_PRIVATE)
+                      val need = p.getBoolean("autostop", false) || p.getBoolean("autocompact", false) || p.getBoolean("rrauto", false)
+                      val i = Intent(ctx, TurboService::class.java)
+                      try {
+                          if (need) ctx.startForegroundService(i) else ctx.stopService(i)
+                      } catch (e: Throwable) {
+                      }
+                  }
+              }
+
+              private lateinit var worker: HandlerThread
+              private lateinit var h: Handler
+              @Volatile private var screenOn = true
+              private var lastPkg = ""
+              private var lastCompact = 0L
+              private var rrApplied = false
+              private val prefs by lazy { getSharedPreferences("kreji", Context.MODE_PRIVATE) }
+
+              private val rx = object : BroadcastReceiver() {
+                  override fun onReceive(c: Context, i: Intent) {
+                      when (i.action) {
+                          Intent.ACTION_SCREEN_OFF -> {
+                              screenOn = false
+                              h.post { onScreenOff() }
+                          }
+                          Intent.ACTION_SCREEN_ON -> screenOn = true
+                      }
+                  }
+              }
+
+              private val tick = object : Runnable {
+                  override fun run() {
+                      try { work() } catch (e: Throwable) {}
+                      h.postDelayed(this, 3000)
+                  }
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+              override fun onCreate() {
+                  super.onCreate()
+                  worker = HandlerThread("turbo-worker")
+                  worker.start()
+                  h = Handler(worker.looper)
+                  startFg()
+                  val f = IntentFilter().apply {
+                      addAction(Intent.ACTION_SCREEN_OFF)
+                      addAction(Intent.ACTION_SCREEN_ON)
+                  }
+                  if (Build.VERSION.SDK_INT >= 33) registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED)
+                  else registerReceiver(rx, f)
+                  h.postDelayed(tick, 3000)
+              }
+
+              override fun onDestroy() {
+                  try { unregisterReceiver(rx) } catch (e: Throwable) {}
+                  h.removeCallbacksAndMessages(null)
+                  if (rrApplied) Thread { Sh.setRefresh(null) }.start()
+                  worker.quitSafely()
+                  super.onDestroy()
+              }
+
+              private fun startFg() {
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.createNotificationChannel(NotificationChannel(CH, "Layanan Kreji Turbo", NotificationManager.IMPORTANCE_LOW))
+                  val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+                  val n = Notification.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.ic_dialog_info)
+                      .setContentTitle("Kreji Turbo aktif")
+                      .setContentText("Fitur otomatis sedang berjalan di latar belakang")
+                      .setContentIntent(pi)
+                      .setOngoing(true)
+                      .build()
+                  if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                  else startForeground(1, n)
+              }
+
+              private fun safe(set: Set<String>): List<String> {
+                  val ok = Regex("[A-Za-z0-9_.]+")
+                  return set.filter { ok.matches(it) }
+              }
+
+              private fun onScreenOff() {
+                  if (prefs.getBoolean("autostop", false) && Sh.state() == 2) {
+                      val pk = safe(prefs.getStringSet("stop_pkgs", emptySet()) ?: emptySet())
+                      Sh.exec("am kill-all" + pk.joinToString("") { "; am force-stop $it" })
+                  }
+                  if (rrApplied) {
+                      Sh.setRefresh(null)
+                      rrApplied = false
+                      lastPkg = ""
+                  }
+              }
+
+              private fun work() {
+                  if (!screenOn || Sh.state() != 2) return
+                  val rr = prefs.getBoolean("rrauto", false)
+                  val cp = prefs.getBoolean("autocompact", false)
+                  if (!rr && rrApplied) {
+                      Sh.setRefresh(null)
+                      rrApplied = false
+                  }
+                  if (!rr && !cp) return
+                  val pkg = Sh.foregroundPkg()
+                  if (pkg.isEmpty()) return
+                  if (rr && pkg != lastPkg) {
+                      val hz = parseRr(prefs.getString("rr_map", ""))[pkg]
+                      if (hz != null) {
+                          Sh.setRefresh(hz)
+                          rrApplied = true
+                      } else if (rrApplied) {
+                          Sh.setRefresh(null)
+                          rrApplied = false
+                      }
+                  }
+                  lastPkg = pkg
+                  val now = System.currentTimeMillis()
+                  if (cp && pkg != packageName && now - lastCompact > 300000L && Regex("[A-Za-z0-9_.]+").matches(pkg)) {
+                      Sh.exec("am compact full $pkg 0")
+                      lastCompact = now
+                  }
+              }
+          }
+          KREJI_EOF_6
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_chevron.xml <<'KREJI_EOF_7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M10,6L8.59,7.41 13.17,12l-4.58,4.59L10,18l6,-6z" />
+          </vector>
+          KREJI_EOF_7
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_home.xml <<'KREJI_EOF_8'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z" />
+          </vector>
+          KREJI_EOF_8
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'KREJI_EOF_9'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="96dp"
+              android:height="96dp"
+              android:viewportWidth="96"
+              android:viewportHeight="96">
+              <path
+                  android:fillColor="#1D4ED8"
+                  android:pathData="M24,0h48a24,24 0 0 1 24,24v48a24,24 0 0 1 -24,24h-48a24,24 0 0 1 -24,-24v-48a24,24 0 0 1 24,-24z" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M54,14 L28,54 L45,54 L40,82 L68,40 L50,40 Z" />
+          </vector>
+          KREJI_EOF_9
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_lock.xml <<'KREJI_EOF_10'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M18,8h-1V6c0,-2.76 -2.24,-5 -5,-5S7,3.24 7,6v2H6c-1.1,0 -2,0.9 -2,2v10c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V10c0,-1.1 -0.9,-2 -2,-2zM12,17c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2zM15.1,8H8.9V6c0,-1.71 1.39,-3.1 3.1,-3.1 1.71,0 3.1,1.39 3.1,3.1v2z" />
+          </vector>
+          KREJI_EOF_10
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_settings.xml <<'KREJI_EOF_11'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M19.14,12.94c0.04,-0.3 0.06,-0.61 0.06,-0.94 0,-0.32 -0.02,-0.64 -0.07,-0.94l2.03,-1.58c0.18,-0.14 0.23,-0.41 0.12,-0.61l-1.92,-3.32c-0.12,-0.22 -0.37,-0.29 -0.59,-0.22l-2.39,0.96c-0.5,-0.38 -1.03,-0.7 -1.62,-0.94L14.4,2.81c-0.04,-0.24 -0.24,-0.41 -0.48,-0.41h-3.84c-0.24,0 -0.43,0.17 -0.47,0.41L9.25,5.35C8.66,5.59 8.12,5.92 7.63,6.29L5.24,5.33c-0.22,-0.08 -0.47,0 -0.59,0.22L2.74,8.87C2.62,9.08 2.66,9.34 2.86,9.48l2.03,1.58C4.84,11.36 4.8,11.69 4.8,12s0.02,0.64 0.07,0.94l-2.03,1.58c-0.18,0.14 -0.23,0.41 -0.12,0.61l1.92,3.32c0.12,0.22 0.37,0.29 0.59,0.22l2.39,-0.96c0.5,0.38 1.03,0.7 1.62,0.94l0.36,2.54c0.05,0.24 0.24,0.41 0.48,0.41h3.84c0.24,0 0.44,-0.17 0.47,-0.41l0.36,-2.54c0.59,-0.24 1.13,-0.56 1.62,-0.94l2.39,0.96c0.22,0.08 0.47,0 0.59,-0.22l1.92,-3.32c0.12,-0.22 0.07,-0.47 -0.12,-0.61L19.14,12.94zM12,15.6c-1.98,0 -3.6,-1.62 -3.6,-3.6s1.62,-3.6 3.6,-3.6s3.6,1.62 3.6,3.6S13.98,15.6 12,15.6z" />
+          </vector>
+          KREJI_EOF_11
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_tools.xml <<'KREJI_EOF_12'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M22.7,19l-9.1,-9.1c0.9,-2.3 0.4,-5 -1.5,-6.9 -2,-2 -5,-2.4 -7.4,-1.3L9,6 6,9 1.6,4.7C0.4,7.1 0.9,10.1 2.9,12.1c1.9,1.9 4.6,2.4 6.9,1.5l9.1,9.1c0.4,0.4 1,0.4 1.4,0l2.3,-2.3c0.5,-0.4 0.5,-1.1 0.1,-1.4z" />
+          </vector>
+          KREJI_EOF_12
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/widget_bg.xml <<'KREJI_EOF_13'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <gradient
+                  android:angle="315"
+                  android:endColor="#1E40AF"
+                  android:startColor="#3B82F6" />
+              <corners android:radius="22dp" />
+          </shape>
+          KREJI_EOF_13
+          mkdir -p app/src/main/res/layout
+          cat > app/src/main/res/layout/widget_boost.xml <<'KREJI_EOF_14'
+          <?xml version="1.0" encoding="utf-8"?>
+          <TextView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_btn"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@drawable/widget_bg"
+              android:gravity="center"
+              android:padding="8dp"
+              android:text="Boost sekarang"
+              android:textColor="#FFFFFF"
+              android:textSize="15sp"
+              android:textStyle="bold" />
+          KREJI_EOF_14
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/styles.xml <<'KREJI_EOF_15'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+                  <item name="android:windowBackground">#F0F4FA</item>
+                  <item name="android:colorAccent">#1D4ED8</item>
+              </style>
+          </resources>
+          KREJI_EOF_15
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/boost_widget_info.xml <<'KREJI_EOF_16'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:initialLayout="@layout/widget_boost"
+              android:minWidth="110dp"
+              android:minHeight="40dp"
+              android:resizeMode="horizontal|vertical"
+              android:targetCellWidth="2"
+              android:targetCellHeight="1"
+              android:updatePeriodMillis="0"
+              android:widgetCategory="home_screen" />
+          KREJI_EOF_16
+          echo 'Proyek dibuat:' && find . -type f | sort
+
+      - name: Build APK debug
+        working-directory: KrejiTurbo
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kreji-Turbo-APK
+          path: KrejiTurbo/app/build/outputs/apk/debug/*.apk
